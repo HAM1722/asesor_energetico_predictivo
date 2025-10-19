@@ -1,0 +1,117 @@
+"""
+Módulo para cargar y validar datos del archivo Excel
+"""
+
+import pandas as pd
+from pathlib import Path
+from typing import Tuple
+import logging
+
+def load_and_validate(file_path: Path) -> pd.DataFrame:
+    """
+    Carga y valida el archivo Excel de consumo energético
+    
+    Args:
+        file_path: Ruta al archivo Excel
+        
+    Returns:
+        DataFrame limpio con datos validados
+        
+    Raises:
+        FileNotFoundError: Si el archivo no existe
+        ValueError: Si los datos no cumplen los requisitos
+    """
+    if not file_path.exists():
+        raise FileNotFoundError(f"El archivo {file_path} no existe")
+    
+    try:
+        # Cargar datos del Excel
+        df = pd.read_excel(file_path)
+        
+        # Limpiar nombres de columnas (eliminar espacios al inicio y final)
+        df.columns = df.columns.str.strip()
+        
+        # Verificar columnas obligatorias
+        required_columns = ['Mes', 'Consumo_KWh']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            raise ValueError(f"Faltan columnas obligatorias: {missing_columns}")
+        
+        # Verificar mínimo de filas (36 meses)
+        if len(df) < 36:
+            raise ValueError(f"Se requieren al menos 36 meses de datos. Se encontraron: {len(df)}")
+        
+        # Verificar duplicados en Mes
+        if df['Mes'].duplicated().any():
+            raise ValueError("Existen meses duplicados en los datos")
+        
+        # Verificar continuidad mensual
+        if not check_data_continuity(df):
+            raise ValueError("Los datos no tienen continuidad mensual")
+        
+        # Limpiar datos
+        df = df.dropna(subset=['Mes', 'Consumo_KWh'])
+        
+        # Ordenar por fecha
+        df['Mes'] = pd.to_datetime(df['Mes'])
+        df = df.sort_values('Mes').reset_index(drop=True)
+        
+        print(f"Datos cargados exitosamente: {len(df)} filas, {len(df.columns)} columnas")
+        print(f"Periodo: {df['Mes'].min().strftime('%Y-%m')} a {df['Mes'].max().strftime('%Y-%m')}")
+        
+        return df
+        
+    except Exception as e:
+        raise ValueError(f"Error al procesar el archivo: {str(e)}")
+
+def check_required_columns(df: pd.DataFrame) -> bool:
+    """
+    Verifica que existan las columnas obligatorias
+    
+    Args:
+        df: DataFrame a verificar
+        
+    Returns:
+        True si todas las columnas requeridas existen
+    """
+    required_columns = ['Mes', 'Consumo_KWh']
+    return all(col in df.columns for col in required_columns)
+
+def check_data_continuity(df: pd.DataFrame) -> bool:
+    """
+    Verifica la continuidad mensual de los datos
+    
+    Args:
+        df: DataFrame con columna Mes
+        
+    Returns:
+        True si hay continuidad mensual
+    """
+    try:
+        # Convertir a datetime si no lo es
+        if not pd.api.types.is_datetime64_any_dtype(df['Mes']):
+            df['Mes'] = pd.to_datetime(df['Mes'])
+        
+        # Ordenar por fecha
+        df_sorted = df.sort_values('Mes')
+        
+        # Generar secuencia esperada de meses
+        start_date = df_sorted['Mes'].min()
+        end_date = df_sorted['Mes'].max()
+        expected_months = pd.date_range(start=start_date, end=end_date, freq='MS')
+        
+        # Verificar que todos los meses esperados estén presentes
+        actual_months = pd.to_datetime(df_sorted['Mes']).dt.to_period('M')
+        expected_months_period = expected_months.to_period('M')
+        
+        missing_months = set(expected_months_period) - set(actual_months)
+        
+        if missing_months:
+            print(f"Meses faltantes detectados: {sorted(list(missing_months))}")
+            return False
+        
+        return True
+        
+    except Exception as e:
+        print(f"Error al verificar continuidad: {str(e)}")
+        return False
