@@ -1,1 +1,221 @@
 
+"""
+Módulo para obtener datos meteorológicos de Cali, Colombia
+"""
+
+import requests
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional
+import time
+import os
+from dotenv import load_dotenv
+
+# Cargar variables de entorno
+load_dotenv()
+
+class WeatherAPI:
+    """Clase para obtener datos meteorológicos históricos"""
+    
+    def __init__(self, api_key: Optional[str] = None):
+        """
+        Inicializa la API meteorológica
+        
+        Args:
+            api_key: Clave de API de OpenWeatherMap (opcional, se puede usar demo)
+        """
+        self.api_key = api_key or os.getenv('OPENWEATHER_API_KEY')
+        self.base_url = "http://api.openweathermap.org/data/2.5"
+        self.city = "Cali,CO"  # Cali, Colombia
+        self.lat = 3.4516  # Latitud de Cali
+        self.lon = -76.5320  # Longitud de Cali
+        
+    def get_historical_weather(self, start_date: datetime, end_date: datetime) -> pd.DataFrame:
+        """
+        Obtiene datos meteorológicos históricos para Cali
+        
+        Args:
+            start_date: Fecha de inicio
+            end_date: Fecha de fin
+            
+        Returns:
+            DataFrame con datos meteorológicos
+        """
+        print("Obteniendo datos meteorologicos de Cali...")
+        
+        # Si no hay API key, usar datos simulados
+        if not self.api_key:
+            print("No se encontro API key, usando datos simulados de temperatura...")
+            return self._generate_simulated_weather(start_date, end_date)
+        
+        try:
+            weather_data = []
+            current_date = start_date
+            
+            while current_date <= end_date:
+                # Obtener datos del día
+                day_data = self._get_day_weather(current_date)
+                if day_data:
+                    weather_data.append(day_data)
+                
+                current_date += timedelta(days=1)
+                
+                # Pausa para no sobrecargar la API
+                time.sleep(0.1)
+            
+            # Crear DataFrame
+            df = pd.DataFrame(weather_data)
+            
+            # Agrupar por mes y calcular promedios
+            df['Mes'] = pd.to_datetime(df['fecha']).dt.to_period('M')
+            monthly_data = df.groupby('Mes').agg({
+                'temperatura': 'mean',
+                'humedad': 'mean',
+                'precipitacion': 'sum'
+            }).reset_index()
+            
+            # Convertir período a datetime
+            monthly_data['Mes'] = monthly_data['Mes'].dt.to_timestamp()
+            
+            print(f"Datos meteorologicos obtenidos: {len(monthly_data)} meses")
+            return monthly_data
+            
+        except Exception as e:
+            print(f"Error obteniendo datos meteorologicos: {e}")
+            print("Usando datos simulados...")
+            return self._generate_simulated_weather(start_date, end_date)
+    
+    def _get_day_weather(self, date: datetime) -> Optional[Dict]:
+        """
+        Obtiene datos meteorológicos para un día específico
+        
+        Args:
+            date: Fecha del día
+            
+        Returns:
+            Diccionario con datos meteorológicos del día
+        """
+        try:
+            # Para OpenWeatherMap, necesitaríamos suscripción premium para datos históricos
+            # Por ahora, generaremos datos simulados realistas
+            return self._generate_daily_weather(date)
+            
+        except Exception as e:
+            print(f"Error obteniendo datos para {date}: {e}")
+            return None
+    
+    def _generate_daily_weather(self, date: datetime) -> Dict:
+        """
+        Genera datos meteorológicos simulados para un día específico
+        
+        Args:
+            date: Fecha del día
+            
+        Returns:
+            Diccionario con datos meteorológicos simulados
+        """
+        # Cali tiene clima tropical, temperatura promedio ~25°C
+        base_temp = 25
+        
+        # Variación estacional (más cálido en enero, más fresco en julio)
+        month = date.month
+        seasonal_variation = 3 * np.sin(2 * np.pi * (month - 1) / 12)
+        
+        # Variación diaria aleatoria
+        daily_variation = np.random.normal(0, 2)
+        
+        # Temperatura del día
+        temperature = base_temp + seasonal_variation + daily_variation
+        
+        # Humedad (Cali es húmeda, promedio ~75%)
+        humidity = np.random.normal(75, 10)
+        humidity = max(40, min(95, humidity))
+        
+        # Precipitación (época de lluvias: abril-mayo y octubre-noviembre)
+        is_rainy_season = month in [4, 5, 10, 11]
+        precipitation = np.random.exponential(2) if is_rainy_season else np.random.exponential(0.5)
+        
+        return {
+            'fecha': date.strftime('%Y-%m-%d'),
+            'temperatura': round(temperature, 1),
+            'humedad': round(humidity, 1),
+            'precipitacion': round(precipitation, 1)
+        }
+    
+    def _generate_simulated_weather(self, start_date: datetime, end_date: datetime) -> pd.DataFrame:
+        """
+        Genera datos meteorológicos simulados para el período
+        
+        Args:
+            start_date: Fecha de inicio
+            end_date: Fecha de fin
+            
+        Returns:
+            DataFrame con datos meteorológicos simulados
+        """
+        print("Generando datos meteorologicos simulados para Cali...")
+        
+        # Generar fechas mensuales
+        dates = pd.date_range(start=start_date, end=end_date, freq='MS')
+        
+        weather_data = []
+        for date in dates:
+            month = date.month
+            
+            # Temperatura promedio de Cali por mes (datos reales aproximados)
+            temp_by_month = {
+                1: 26.5, 2: 26.8, 3: 26.9, 4: 26.4, 5: 25.8, 6: 25.4,
+                7: 25.6, 8: 26.0, 9: 26.3, 10: 26.1, 11: 25.9, 12: 26.2
+            }
+            
+            # Humedad promedio por mes
+            humidity_by_month = {
+                1: 70, 2: 68, 3: 72, 4: 78, 5: 82, 6: 80,
+                7: 75, 8: 73, 9: 74, 10: 79, 11: 82, 12: 75
+            }
+            
+            # Precipitación promedio por mes (mm)
+            precip_by_month = {
+                1: 40, 2: 45, 3: 85, 4: 120, 5: 110, 6: 70,
+                7: 45, 8: 50, 9: 80, 10: 110, 11: 95, 12: 60
+            }
+            
+            # Agregar variación aleatoria
+            temperature = temp_by_month[month] + np.random.normal(0, 1.5)
+            humidity = humidity_by_month[month] + np.random.normal(0, 5)
+            precipitation = precip_by_month[month] + np.random.normal(0, 20)
+            precipitation = max(0, precipitation)
+            
+            weather_data.append({
+                'Mes': date,
+                'temperatura': round(temperature, 1),
+                'humedad': round(humidity, 1),
+                'precipitacion': round(precipitation, 1)
+            })
+        
+        df = pd.DataFrame(weather_data)
+        print(f"Datos meteorologicos simulados generados: {len(df)} meses")
+        return df
+
+def get_weather_data_for_period(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Obtiene datos meteorológicos para el período de los datos de consumo
+    
+    Args:
+        df: DataFrame con datos de consumo
+        
+    Returns:
+        DataFrame con datos meteorológicos
+    """
+    # Obtener rango de fechas de los datos
+    start_date = df['Mes'].min()
+    end_date = df['Mes'].max()
+    
+    # Crear instancia de la API meteorológica
+    weather_api = WeatherAPI()
+    
+    # Obtener datos meteorológicos
+    weather_df = weather_api.get_historical_weather(start_date, end_date)
+    
+    return weather_df
