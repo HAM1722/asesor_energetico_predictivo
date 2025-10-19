@@ -1,0 +1,186 @@
+"""
+Módulo de preprocesamiento de datos
+"""
+
+import pandas as pd
+import numpy as np
+from typing import Tuple
+from datetime import datetime
+from weather_api import get_weather_data_for_period
+
+def make_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, pd.DataFrame]:
+    """
+    Crea features de calendario, lags de consumo y datos meteorológicos
+    
+    Args:
+        df: DataFrame con datos de consumo
+        
+    Returns:
+        Tuple con (X, y, df_with_features)
+    """
+    # Crear copia para no modificar el original
+    df_features = df.copy()
+    
+    # Crear features de calendario
+    df_features = create_calendar_features(df_features)
+    
+    # Crear features de lag
+    df_features = create_lag_features(df_features)
+    
+    # Agregar datos meteorológicos
+    df_features = add_weather_features(df_features)
+    
+    # Preparar X e y
+    feature_columns = ['mes_sin', 'mes_cos', 'lag1', 'lag2', 'lag3']
+    
+    # Agregar Tarifa_Promedio si existe
+    if 'Tarifa_Promedio' in df_features.columns:
+        feature_columns.append('Tarifa_Promedio')
+    
+    # Agregar features meteorológicas si existen
+    weather_features = ['temperatura', 'humedad', 'precipitacion']
+    for feature in weather_features:
+        if feature in df_features.columns:
+            feature_columns.append(feature)
+    
+    # Agregar horas de operación si existe
+    if 'horas_operacion' in df_features.columns:
+        feature_columns.append('horas_operacion')
+        print(f"Feature agregada: horas_operacion")
+    
+    # Filtrar filas que tienen todos los features (eliminar filas con NaN por lags)
+    df_features = df_features.dropna(subset=feature_columns)
+    
+    X = df_features[feature_columns]
+    y = df_features['Consumo_KWh']
+    
+    print(f"Features creadas: {len(feature_columns)} columnas")
+    print(f"Datos para entrenamiento: {len(X)} filas")
+    print(f"Features: {feature_columns}")
+    
+    return X, y, df_features
+
+def create_calendar_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Crea features de calendario (mes_sin, mes_cos)
+    
+    Args:
+        df: DataFrame con columna Mes
+        
+    Returns:
+        DataFrame con features de calendario agregadas
+    """
+    df_calendar = df.copy()
+    
+    # Asegurar que Mes es datetime
+    if not pd.api.types.is_datetime64_any_dtype(df_calendar['Mes']):
+        df_calendar['Mes'] = pd.to_datetime(df_calendar['Mes'])
+    
+    # Extraer mes como número (1-12)
+    df_calendar['month'] = df_calendar['Mes'].dt.month
+    
+    # Crear features cíclicas para capturar estacionalidad
+    df_calendar['mes_sin'] = np.sin(2 * np.pi * df_calendar['month'] / 12)
+    df_calendar['mes_cos'] = np.cos(2 * np.pi * df_calendar['month'] / 12)
+    
+    # Eliminar columna temporal month
+    df_calendar = df_calendar.drop('month', axis=1)
+    
+    return df_calendar
+
+def create_lag_features(df: pd.DataFrame, lags: list = [1, 2, 3]) -> pd.DataFrame:
+    """
+    Crea features de lag para el consumo
+    
+    Args:
+        df: DataFrame con columna Consumo_KWh
+        lags: Lista de lags a crear
+        
+    Returns:
+        DataFrame con features de lag agregadas
+    """
+    df_lags = df.copy()
+    
+    # Asegurar que está ordenado por fecha
+    df_lags = df_lags.sort_values('Mes').reset_index(drop=True)
+    
+    # Crear lags
+    for lag in lags:
+        df_lags[f'lag{lag}'] = df_lags['Consumo_KWh'].shift(lag)
+    
+    return df_lags
+
+def time_based_split(X: pd.DataFrame, y: pd.Series, train_size: float = 0.8) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    """
+    Realiza split temporal de los datos (sin shuffle)
+    
+    Args:
+        X: Features
+        y: Target
+        train_size: Proporción para entrenamiento (0.8 = 80%)
+        
+    Returns:
+        Tuple con (X_train, X_test, y_train, y_test)
+    """
+    # Calcular índice de corte
+    split_idx = int(len(X) * train_size)
+    
+    # Split temporal
+    X_train = X.iloc[:split_idx]
+    X_test = X.iloc[split_idx:]
+    y_train = y.iloc[:split_idx]
+    y_test = y.iloc[split_idx:]
+    
+    print(f"Split temporal realizado:")
+    print(f"   Entrenamiento: {len(X_train)} muestras ({len(X_train)/len(X)*100:.1f}%)")
+    print(f"   Test: {len(X_test)} muestras ({len(X_test)/len(X)*100:.1f}%)")
+    
+    return X_train, X_test, y_train, y_test
+
+def add_weather_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Agrega features meteorológicas al DataFrame
+    
+    Args:
+        df: DataFrame con datos de consumo
+        
+    Returns:
+        DataFrame con features meteorológicas agregadas
+    """
+    print("Agregando datos meteorologicos...")
+    
+    # Verificar si ya existen datos meteorológicos en el DataFrame
+    weather_columns = ['temperatura', 'humedad', 'precipitacion']
+    existing_weather = [col for col in weather_columns if col in df.columns]
+    
+    if existing_weather:
+        print(f"Usando datos meteorologicos existentes del Excel: {existing_weather}")
+        df_with_weather = df.copy()
+        
+        # Asegurar que todas las columnas meteorológicas existen
+        for col in weather_columns:
+            if col not in df_with_weather.columns:
+                if col == 'temperatura':
+                    df_with_weather[col] = 25.0  # Temperatura promedio de Cali
+                elif col == 'humedad':
+                    df_with_weather[col] = 75.0  # Humedad promedio de Cali
+                elif col == 'precipitacion':
+                    df_with_weather[col] = 50.0  # Precipitación promedio mensual
+    else:
+        print("No se encontraron datos meteorologicos en el Excel, obteniendo datos externos...")
+        
+        # Obtener datos meteorológicos para el período
+        weather_df = get_weather_data_for_period(df)
+        
+        # Hacer merge con los datos originales
+        df_with_weather = df.merge(weather_df, on='Mes', how='left')
+        
+        # Si no se pudieron obtener datos meteorológicos, usar valores por defecto
+        if 'temperatura' not in df_with_weather.columns:
+            print("No se pudieron obtener datos meteorologicos externos, usando valores por defecto")
+            df_with_weather['temperatura'] = 25.0  # Temperatura promedio de Cali
+            df_with_weather['humedad'] = 75.0      # Humedad promedio de Cali
+            df_with_weather['precipitacion'] = 50.0  # Precipitación promedio mensual
+    
+    print(f"Features meteorologicas agregadas: temperatura, humedad, precipitacion")
+    return df_with_weather
