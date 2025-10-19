@@ -1,0 +1,296 @@
+"""
+Módulo de generación de reportes y gráficos
+"""
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from docx import Document
+from docx.shared import Inches
+from pathlib import Path
+from typing import Dict, Tuple
+import datetime
+
+def build_charts_and_tables(y_test: pd.Series, y_pred: pd.Series, 
+                           output_dir: Path) -> pd.DataFrame:
+    """
+    Genera gráficos y tablas de evaluación
+    
+    Args:
+        y_test: Valores reales del test
+        y_pred: Valores predichos
+        output_dir: Directorio de salida
+        
+    Returns:
+        DataFrame con resumen de desviaciones
+    """
+    print("Generando graficos y tablas...")
+    
+    # Crear gráfico
+    chart_path = output_dir / "real_vs_pred.png"
+    create_real_vs_pred_chart(y_test, y_pred, chart_path)
+    
+    # Asegurar que tenemos arrays numpy
+    y_test_vals = y_test.values if hasattr(y_test, 'values') else y_test
+    y_pred_vals = y_pred.values if hasattr(y_pred, 'values') else y_pred
+    
+    # Crear tabla de desviaciones con fechas reales
+    summary_df = pd.DataFrame({
+        'Mes': y_test.index,  # Usar las fechas reales del índice
+        'Real': y_test_vals,
+        'Predicho': y_pred_vals,
+        'Desviacion_KWh': y_pred_vals - y_test_vals,
+        'Desviacion_Pct': ((y_pred_vals - y_test_vals) / y_test_vals * 100)
+    })
+    
+    # Agregar columna de estado
+    summary_df['Estado'] = summary_df['Desviacion_Pct'].apply(
+        lambda x: "ALERTA" if abs(x) > 20 else "ESTABLE"
+    )
+    
+    # Formatear columnas
+    summary_df['Desviacion_Pct'] = summary_df['Desviacion_Pct'].round(1)
+    summary_df['Desviacion_KWh'] = summary_df['Desviacion_KWh'].round(0)
+    summary_df['Real'] = summary_df['Real'].round(0)
+    summary_df['Predicho'] = summary_df['Predicho'].round(0)
+    
+    print(f"Grafico guardado en: {chart_path}")
+    print(f"Tabla de desviaciones creada: {len(summary_df)} filas")
+    
+    return summary_df
+
+def create_real_vs_pred_chart(y_test: pd.Series, y_pred: pd.Series, 
+                             output_path: Path) -> None:
+    """
+    Crea gráfico de valores reales vs predichos
+    
+    Args:
+        y_test: Valores reales
+        y_pred: Valores predichos
+        output_path: Ruta donde guardar el gráfico
+    """
+    # Configurar el estilo del gráfico
+    plt.style.use('default')
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    # Crear índices para el eje x
+    x = range(len(y_test))
+    
+    # Plotear líneas
+    y_test_vals = y_test.values if hasattr(y_test, 'values') else y_test
+    y_pred_vals = y_pred.values if hasattr(y_pred, 'values') else y_pred
+    ax.plot(x, y_test_vals, 'b-', label='Valores Reales', linewidth=2, marker='o')
+    ax.plot(x, y_pred_vals, 'r--', label='Valores Predichos', linewidth=2, marker='s')
+    
+    # Configurar el gráfico
+    ax.set_xlabel('Período de Test', fontsize=12)
+    ax.set_ylabel('Consumo (KWh)', fontsize=12)
+    ax.set_title('Comparación: Valores Reales vs Predichos', fontsize=14, fontweight='bold')
+    ax.legend(fontsize=11)
+    ax.grid(True, alpha=0.3)
+    
+    # Mejorar el layout
+    plt.tight_layout()
+    
+    # Guardar el gráfico
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"Grafico guardado: {output_path}")
+
+def calculate_metrics(y_test: pd.Series, y_pred: pd.Series) -> Dict[str, float]:
+    """
+    Calcula métricas de evaluación (MAPE, RMSE, MAE)
+    
+    Args:
+        y_test: Valores reales
+        y_pred: Valores predichos
+        
+    Returns:
+        Diccionario con las métricas calculadas
+    """
+    # MAE (Mean Absolute Error)
+    mae = np.mean(np.abs(y_test - y_pred))
+    
+    # RMSE (Root Mean Square Error)
+    rmse = np.sqrt(np.mean((y_test - y_pred) ** 2))
+    
+    # MAPE (Mean Absolute Percentage Error)
+    mape = np.mean(np.abs((y_test - y_pred) / y_test)) * 100
+    
+    metrics = {
+        'MAE': mae,
+        'RMSE': rmse,
+        'MAPE': mape
+    }
+    
+    return metrics
+
+def generate_docx(metrics: Dict[str, float], 
+                 summary_df: pd.DataFrame,
+                 chart_path: Path,
+                 output_path: Path,
+                 client_name: str = "CLIENTE",
+                 forecast_df: pd.DataFrame = None) -> None:
+    """
+    Genera informe en formato Word
+    
+    Args:
+        metrics: Métricas calculadas
+        summary_df: DataFrame con resumen
+        chart_path: Ruta del gráfico
+        output_path: Ruta donde guardar el informe
+        client_name: Nombre del cliente
+        forecast_df: DataFrame con predicciones futuras (opcional)
+    """
+    print("Generando informe Word...")
+    
+    # Crear documento
+    doc = Document()
+    
+    # Título
+    title = doc.add_heading('Informe de Análisis Predictivo de Consumo Energético', 0)
+    title.alignment = 1  # Centrado
+    
+    # Información del cliente y fecha
+    doc.add_heading(f'Cliente: {client_name}', level=1)
+    doc.add_paragraph(f'Fecha de generación: {datetime.datetime.now().strftime("%d/%m/%Y %H:%M")}')
+    
+    # Resumen ejecutivo
+    doc.add_heading('Resumen Ejecutivo', level=1)
+    
+    mape = metrics['MAPE']
+    if mape <= 20:
+        status = "ACEPTABLE"
+        status_color = "El modelo presenta un rendimiento aceptable"
+    else:
+        status = "REQUIERE REVISIÓN"
+        status_color = "El modelo requiere optimización"
+    
+    summary_text = f"""
+El análisis predictivo de consumo energético para {client_name} muestra un MAPE de {mape:.1f}%, 
+lo cual se clasifica como {status}. {status_color} con una desviación promedio de {metrics['MAE']:.0f} KWh 
+y un error cuadrático medio de {metrics['RMSE']:.0f} KWh.
+    """
+    doc.add_paragraph(summary_text.strip())
+    
+    # Métricas
+    doc.add_heading('Métricas de Evaluación', level=1)
+    
+    # Tabla de métricas
+    metrics_table = doc.add_table(rows=1, cols=2)
+    metrics_table.style = 'Table Grid'
+    
+    # Encabezados
+    hdr_cells = metrics_table.rows[0].cells
+    hdr_cells[0].text = 'Métrica'
+    hdr_cells[1].text = 'Valor'
+    
+    # Agregar métricas
+    for metric_name, value in metrics.items():
+        row_cells = metrics_table.add_row().cells
+        row_cells[0].text = metric_name
+        if metric_name == 'MAPE':
+            row_cells[1].text = f'{value:.1f}%'
+        else:
+            row_cells[1].text = f'{value:.0f} KWh'
+    
+    # Tabla de desviaciones
+    doc.add_heading('Análisis de Desviaciones', level=1)
+    
+    # Crear tabla de desviaciones
+    deviations_table = doc.add_table(rows=1, cols=5)
+    deviations_table.style = 'Table Grid'
+    
+    # Encabezados
+    hdr_cells = deviations_table.rows[0].cells
+    hdr_cells[0].text = 'Mes'
+    hdr_cells[1].text = 'Real (KWh)'
+    hdr_cells[2].text = 'Predicho (KWh)'
+    hdr_cells[3].text = 'Desviación (%)'
+    hdr_cells[4].text = 'Estado'
+    
+    # Agregar datos
+    for _, row in summary_df.iterrows():
+        row_cells = deviations_table.add_row().cells
+        row_cells[0].text = str(row['Mes'])
+        row_cells[1].text = str(row['Real'])
+        row_cells[2].text = str(row['Predicho'])
+        row_cells[3].text = f"{row['Desviacion_Pct']:.1f}%"
+        row_cells[4].text = row['Estado']
+    
+    # Gráfico
+    doc.add_heading('Comparación Visual', level=1)
+    doc.add_paragraph('A continuación se presenta la comparación visual entre valores reales y predichos:')
+    
+    # Insertar imagen
+    doc.add_picture(str(chart_path), width=Inches(6))
+    
+    # Recomendaciones
+    # Agregar predicciones futuras si están disponibles
+    if forecast_df is not None and not forecast_df.empty:
+        doc.add_heading('Predicciones Futuras', level=1)
+        doc.add_paragraph('A continuación se presentan las predicciones de consumo energético para los próximos 3 meses:')
+        
+        # Crear tabla de predicciones
+        forecast_table = doc.add_table(rows=1, cols=3)
+        forecast_table.style = 'Table Grid'
+        
+        # Encabezados
+        hdr_cells = forecast_table.rows[0].cells
+        hdr_cells[0].text = 'Mes'
+        hdr_cells[1].text = 'Consumo Predicho (KWh)'
+        hdr_cells[2].text = 'Análisis Estacional'
+        
+        # Agregar datos de predicciones
+        for _, row in forecast_df.iterrows():
+            row_cells = forecast_table.add_row().cells
+            row_cells[0].text = row['Mes'].strftime('%Y-%m')
+            row_cells[1].text = f"{row['Consumo_KWh']:.0f}"
+            
+            # Análisis estacional básico
+            month = row['Mes'].month
+            if month in [12, 1, 2]:
+                seasonal = "Alto (Temporada alta)"
+            elif month in [6, 7, 8]:
+                seasonal = "Medio (Temporada media)"
+            else:
+                seasonal = "Bajo (Temporada baja)"
+            row_cells[2].text = seasonal
+        
+        doc.add_paragraph('Nota: Las predicciones se basan en patrones históricos y factores estacionales identificados en el modelo.')
+    
+    doc.add_heading('Recomendaciones', level=1)
+    add_recommendations(doc, metrics)
+    
+    # Guardar documento
+    doc.save(output_path)
+    print(f"Informe Word generado: {output_path}")
+
+def add_recommendations(doc: Document, metrics: Dict[str, float]) -> None:
+    """
+    Agrega recomendaciones basadas en las métricas
+    
+    Args:
+        doc: Documento Word
+        metrics: Métricas calculadas
+    """
+    mape = metrics['MAPE']
+    
+    if mape <= 20:
+        doc.add_paragraph("El modelo presenta un rendimiento satisfactorio.")
+        doc.add_paragraph("Recomendaciones:")
+        doc.add_paragraph("• Mantener el modelo actual para predicciones futuras.")
+        doc.add_paragraph("• Monitorear el rendimiento mensualmente.")
+        doc.add_paragraph("• Considerar actualizar el modelo anualmente con nuevos datos.")
+    else:
+        doc.add_paragraph("El modelo requiere optimizacion.")
+        doc.add_paragraph("Recomendaciones:")
+        doc.add_paragraph("• Revisar la calidad de los datos históricos.")
+        doc.add_paragraph("• Considerar agregar más variables explicativas (Tarifa_Promedio, etc.).")
+        doc.add_paragraph("• Evaluar la inclusión de más lags (lag4, lag5).")
+        doc.add_paragraph("• Probar diferentes valores de regularización (alpha).")
+        doc.add_paragraph("• Analizar posibles outliers o patrones estacionales no capturados.")
+    
+    doc.add_paragraph("")
+    doc.add_paragraph("Nota: Este análisis se basa en datos históricos y debe complementarse con conocimiento del negocio para decisiones estratégicas.")
