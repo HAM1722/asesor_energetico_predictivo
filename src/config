@@ -1,1 +1,29 @@
 
+"""
+Configuración del proyecto Asesor Energético Predictivo
+Define rutas y parámetros globales
+"""
+
+import os
+from pathlib import Path
+
+# Rutas del proyecto
+PROJECT_ROOT = Path(__file__).parent.parent
+DATA_DIR = PROJECT_ROOT / "data"
+MODELS_DIR = PROJECT_ROOT / "models"
+OUTPUT_DIR = PROJECT_ROOT / "output"
+
+# Archivo de datos
+DATA_FILE = DATA_DIR / "Consumo_Energia_CLIENTE.xlsx"
+
+# Parámetros del modelo
+ALPHA_VALUES = [0.1, 1, 10]
+TRAIN_SIZE = 0.8  # 80% para entrenamiento
+MIN_MONTHS = 36  # Mínimo de meses requeridos
+FORECAST_MONTHS = 3  # Meses a predecir
+MAPE_THRESHOLD = 20.0  # Umbral de MAPE para alertas
+
+# Crear directorios si no existen
+DATA_DIR.mkdir(exist_ok=True)
+MODELS_DIR.mkdir(exist_ok=True)
+OUTPUT_DIR.mkdir(exist_ok=True)
