@@ -1,0 +1,154 @@
+"""
+Módulo de predicción a futuro
+"""
+
+import pandas as pd
+import numpy as np
+from sklearn.pipeline import Pipeline
+from typing import Dict
+from datetime import datetime, timedelta
+
+def forecast_next_3(model: Pipeline, df_full: pd.DataFrame) -> pd.DataFrame:
+    """
+    Realiza predicción recursiva para los próximos 3 meses
+    
+    Args:
+        model: Modelo entrenado
+        df_full: DataFrame completo con todos los datos históricos
+        
+    Returns:
+        DataFrame con predicciones para los próximos 3 meses
+    """
+    print("Iniciando prediccion para los proximos 3 meses...")
+    
+    # Crear copia del DataFrame para trabajar
+    df_forecast = df_full.copy()
+    
+    # Obtener el último mes de datos históricos
+    last_date = df_forecast['Mes'].max()
+    
+    # Lista para almacenar predicciones
+    predictions = []
+    
+    # Predicción recursiva para 3 meses
+    for i in range(3):
+        # Calcular el siguiente mes
+        if i == 0:
+            next_month = last_date + pd.DateOffset(months=1)
+        else:
+            next_month = last_date + pd.DateOffset(months=i+1)
+        
+        # Preparar features para este mes
+        features = prepare_forecast_features(df_forecast, next_month)
+        
+        # Realizar predicción
+        prediction = model.predict(features)[0]
+        predictions.append(prediction)
+        
+        # Actualizar DataFrame con la nueva predicción para usar en siguientes lags
+        new_row = {
+            'Mes': next_month,
+            'Consumo_KWh': prediction
+        }
+        
+        # Agregar otras columnas si existen
+        if 'Tarifa_Promedio' in df_forecast.columns:
+            # Usar último valor conocido de tarifa
+            new_row['Tarifa_Promedio'] = df_forecast['Tarifa_Promedio'].iloc[-1]
+        
+        df_forecast = pd.concat([df_forecast, pd.DataFrame([new_row])], ignore_index=True)
+        
+        print(f"   {next_month.strftime('%Y-%m')}: {prediction:.0f} KWh")
+    
+    # Crear DataFrame de resultados
+    forecast_dates = [last_date + pd.DateOffset(months=i+1) for i in range(3)]
+    forecast_df = pd.DataFrame({
+        'Mes': forecast_dates,
+        'Consumo_KWh': predictions
+    })
+    
+    print("Prediccion completada")
+    return forecast_df
+
+def prepare_forecast_features(df: pd.DataFrame, forecast_month: datetime) -> pd.DataFrame:
+    """
+    Prepara las features para un mes específico de predicción
+    
+    Args:
+        df: DataFrame con datos históricos
+        forecast_month: Mes para el cual predecir
+        
+    Returns:
+        DataFrame con features preparadas para predicción
+    """
+    # Asegurar que el DataFrame está ordenado por fecha
+    df_sorted = df.sort_values('Mes').reset_index(drop=True)
+    
+    # Crear features de calendario para el mes a predecir
+    month_num = forecast_month.month
+    mes_sin = np.sin(2 * np.pi * month_num / 12)
+    mes_cos = np.cos(2 * np.pi * month_num / 12)
+    
+    # Crear features de lag (últimos 3 meses conocidos)
+    lag1 = df_sorted['Consumo_KWh'].iloc[-1]  # Último mes
+    lag2 = df_sorted['Consumo_KWh'].iloc[-2]  # Penúltimo mes
+    lag3 = df_sorted['Consumo_KWh'].iloc[-3]  # Antepenúltimo mes
+    
+    # Crear DataFrame con features
+    features_dict = {
+        'mes_sin': [mes_sin],
+        'mes_cos': [mes_cos],
+        'lag1': [lag1],
+        'lag2': [lag2],
+        'lag3': [lag3]
+    }
+    
+    # Agregar Tarifa_Promedio si existe
+    if 'Tarifa_Promedio' in df_sorted.columns:
+        tarifa = df_sorted['Tarifa_Promedio'].iloc[-1]
+        features_dict['Tarifa_Promedio'] = [tarifa]
+    
+    # Agregar features meteorológicas (usar valores históricos promedio para el mes)
+    if 'temperatura' in df_sorted.columns:
+        # Usar temperatura promedio histórica para el mismo mes
+        historical_temp = df_sorted[df_sorted['Mes'].dt.month == month_num]['temperatura'].mean()
+        features_dict['temperatura'] = [historical_temp if not pd.isna(historical_temp) else 25.0]
+    
+    if 'humedad' in df_sorted.columns:
+        # Usar humedad promedio histórica para el mismo mes
+        historical_hum = df_sorted[df_sorted['Mes'].dt.month == month_num]['humedad'].mean()
+        features_dict['humedad'] = [historical_hum if not pd.isna(historical_hum) else 75.0]
+    
+    if 'precipitacion' in df_sorted.columns:
+        # Usar precipitación promedio histórica para el mismo mes
+        historical_precip = df_sorted[df_sorted['Mes'].dt.month == month_num]['precipitacion'].mean()
+        features_dict['precipitacion'] = [historical_precip if not pd.isna(historical_precip) else 50.0]
+    
+    # Agregar horas de operación (usar promedio histórico para el mismo mes)
+    if 'horas_operacion' in df_sorted.columns:
+        historical_hours = df_sorted[df_sorted['Mes'].dt.month == month_num]['horas_operacion'].mean()
+        features_dict['horas_operacion'] = [historical_hours if not pd.isna(historical_hours) else 300.0]
+    
+    features_df = pd.DataFrame(features_dict)
+    
+    return features_df
+
+def update_lags_with_prediction(df: pd.DataFrame, prediction: float) -> pd.DataFrame:
+    """
+    Actualiza los lags con una nueva predicción
+    
+    Args:
+        df: DataFrame con datos históricos
+        prediction: Nueva predicción
+        
+    Returns:
+        DataFrame actualizado con el nuevo lag
+    """
+    df_updated = df.copy()
+    
+    # Actualizar los lags desplazando hacia atrás
+    df_updated['lag3'] = df_updated['lag2']
+    df_updated['lag2'] = df_updated['lag1']
+    df_updated['lag1'] = prediction
+    
+    return df_updated
