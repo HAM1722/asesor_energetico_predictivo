@@ -1,0 +1,142 @@
+"""
+Módulo de entrenamiento y validación del modelo
+"""
+
+import pandas as pd
+import numpy as np
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import Ridge
+from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
+from typing import Dict, Tuple
+import pickle
+from pathlib import Path
+
+def train_model(X_train: pd.DataFrame, y_train: pd.Series, 
+                alphas: list = [0.1, 1, 10]) -> Pipeline:
+    """
+    Entrena el modelo Ridge con pipeline de escalado
+    
+    Args:
+        X_train: Features de entrenamiento
+        y_train: Target de entrenamiento
+        alphas: Lista de valores alpha para Ridge
+        
+    Returns:
+        Pipeline entrenado
+    """
+    print("Iniciando entrenamiento del modelo...")
+    
+    # Crear pipeline
+    pipeline = create_pipeline()
+    
+    # Configurar GridSearch para encontrar mejor alpha
+    param_grid = {'ridge__alpha': alphas}
+    
+    # Usar TimeSeriesSplit para validación cruzada temporal
+    tscv = TimeSeriesSplit(n_splits=3)
+    
+    # GridSearch con validación cruzada temporal
+    grid_search = GridSearchCV(
+        pipeline, 
+        param_grid, 
+        cv=tscv, 
+        scoring='neg_mean_absolute_error',
+        n_jobs=-1
+    )
+    
+    # Entrenar modelo
+    grid_search.fit(X_train, y_train)
+    
+    # Obtener mejor modelo
+    best_model = grid_search.best_estimator_
+    best_alpha = grid_search.best_params_['ridge__alpha']
+    
+    print(f"Modelo entrenado exitosamente")
+    print(f"Mejor alpha encontrado: {best_alpha}")
+    print(f"Mejor score (MAE): {-grid_search.best_score_:.2f}")
+    
+    return best_model
+
+def create_pipeline(alpha: float = 1.0) -> Pipeline:
+    """
+    Crea el pipeline con StandardScaler y Ridge
+    
+    Args:
+        alpha: Parámetro de regularización para Ridge
+        
+    Returns:
+        Pipeline configurado
+    """
+    pipeline = Pipeline([
+        ('scaler', StandardScaler()),
+        ('ridge', Ridge(alpha=alpha, random_state=42))
+    ])
+    
+    return pipeline
+
+def save_model(model: Pipeline, file_path: Path) -> None:
+    """
+    Guarda el modelo entrenado
+    
+    Args:
+        model: Modelo entrenado
+        file_path: Ruta donde guardar el modelo
+    """
+    with open(file_path, 'wb') as f:
+        pickle.dump(model, f)
+    print(f"Modelo guardado en: {file_path}")
+
+def load_model(file_path: Path) -> Pipeline:
+    """
+    Carga un modelo previamente entrenado
+    
+    Args:
+        file_path: Ruta del modelo
+        
+    Returns:
+        Modelo cargado
+    """
+    with open(file_path, 'rb') as f:
+        model = pickle.load(f)
+    print(f"Modelo cargado desde: {file_path}")
+    return model
+
+def evaluate(y_test: pd.Series, y_pred: pd.Series) -> Dict[str, float]:
+    """
+    Calcula métricas de evaluación del modelo
+    
+    Args:
+        y_test: Valores reales
+        y_pred: Valores predichos
+        
+    Returns:
+        Diccionario con las métricas calculadas
+    """
+    from sklearn.metrics import mean_absolute_error, mean_squared_error
+    
+    # Calcular métricas
+    mae = mean_absolute_error(y_test, y_pred)
+    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+    
+    # MAPE (Mean Absolute Percentage Error)
+    mape = np.mean(np.abs((y_test - y_pred) / y_test)) * 100
+    
+    metrics = {
+        'MAE': mae,
+        'RMSE': rmse,
+        'MAPE': mape
+    }
+    
+    print("Metricas de Evaluacion:")
+    print(f"   MAE:  {mae:.2f} KWh")
+    print(f"   RMSE: {rmse:.2f} KWh")
+    print(f"   MAPE: {mape:.1f}%")
+    
+    # Verificar criterio de aceptación
+    if mape <= 20.0:
+        print("Modelo ACEPTADO (MAPE <= 20%)")
+    else:
+        print("Modelo requiere revision (MAPE > 20%)")
+    
+    return metrics
